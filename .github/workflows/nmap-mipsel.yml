@@ -85,7 +85,7 @@ jobs:
           body: |
              > ### 编译时间 ：${{ env.build_time }}
 
-              **[当前编译的提交记录]https://github.com/nmap/nmap/tree/${{ env.haxi }})**
+              [当前版本编译时的提交记录](https://github.com/nmap/nmap/tree/${{ env.haxi }}) 如需最新的，请fork后手动触发执行编译流程
               
               **-upx** 后缀的 为upx压缩文件
               
