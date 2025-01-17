@@ -1,0 +1,98 @@
+name: nmap-mipsel
+on:
+  workflow_dispatch:
+env:
+  TZ: Asia/Shanghai
+#设置仓库的读写权限
+permissions:
+  contents: write
+  actions: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        repository: nmap/nmap
+        ref: master #默认使用master分支
+    - name: 删除记录
+      uses: Mattraks/delete-workflow-runs@main
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+        retain_days: 0
+        keep_minimum_runs: 0
+    - name: 下载gcc
+      uses: lmq8267/dl-musl@main
+      with:
+        target: mipsel-linux-muslsf
+        static: true
+        gccpath: /tmp
+
+    - name: 编译
+      run: |
+         sudo timedatectl set-timezone "Asia/Shanghai"
+         mipsel-linux-muslsf-gcc -v
+         export CC="$CC -static"
+         export CXX="$CXX -static"
+         export CFLAGS="-mlong-calls -O2 $CFLAGS"
+         export CXXFLAGS="-mlong-calls -O2 $CXXFLAGS"
+         export LDFLAGS="-mlong-calls -O2 $LDFLAGS"
+         sed -i 's|-L\. \$(SHAREDLIBV)|\$(TEST_LIBS)|g' ./libz/Makefile.in
+         ./configure --host=mipsel-linux-muslsf --enable-static --disable-shared --with-ncat --without-nping --without-localdirs --without-ndiff --without-zenmap
+         make
+         file nmap
+         mkdir -p /opt/nmap
+         mipsel-linux-muslsf-strip nmap
+         mv nmap /opt/nmap/
+         mv ./ncat/ncat /opt/nmap/
+         mipsel-linux-muslsf-strip /opt/nmap/ncat
+         echo "build_time=$(TZ=Asia/Shanghai date '+%Y-%m-%d %H:%M:%S')" >> $GITHUB_ENV
+         echo "date_time=$(date '+%Y-%m-%d')" >> $GITHUB_ENV
+         echo "haxi=$(git rev-parse HEAD)" >> $GITHUB_ENV
+         echo "short_haxi=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
+    - name: 安装 UPX
+      uses: crazy-max/ghaction-upx@v3
+      with:
+        version: latest
+        install-only: true
+    - name: 压缩
+      run: |
+         cd /opt/nmap
+         for file in /opt/nmap/*; do
+          if [ -f "$file" ]; then
+            file $file
+            cp "$file" "${file}_upx"
+          fi
+         done
+         ls -alh
+         for file in /opt/nmap/*_upx; do
+          if [ -f "$file" ]; then
+            echo "压缩 $file"
+            ls -alh $file
+            upx --lzma --best "$file"
+            ls -alh $file
+          fi
+         done
+    - uses: actions/upload-artifact@v4
+      with:
+        name: nmap-mipsel
+        path: /opt/nmap/
+    - name: 发布
+      uses: softprops/action-gh-release@v2
+      with:
+          token: ${{ github.token }}
+          body: |
+             > ### 编译时间 ：${{ env.build_time }}
+
+              **[当前编译的提交记录]https://github.com/nmap/nmap/tree/${{ env.haxi }})**
+              
+              **-upx** 后缀的 为upx压缩文件
+              
+              **[官方仓库](https://github.com/nmap/nmap)**
+              
+          tag_name: ${{ env.short_haxi }}
+          name: ${{ env.short_haxi }}_${{ env.date_time }}
+          files: /opt/nmap/*
+
+     
