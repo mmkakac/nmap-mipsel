@@ -118,7 +118,7 @@ jobs:
         # 生成配置脚本
         ./autogen.sh
         
-        # 详细配置tcpreplay，强制使用指定的libpcap
+        # 详细配置tcpreplay，修正变量命名错误
         ./configure --host=mipsel-linux-muslsf \
                     --enable-static \
                     --disable-shared \
@@ -126,7 +126,7 @@ jobs:
                     --with-pcap=${LIBPCAP_INSTALL} \
                     --prefix=/tmp/tcpreplay-install \
                     ac_cv_lib_pcap_pcap_open_live=yes \
-                    ac_cv_header_pcap.h=yes \
+                    ac_cv_header_pcap_h=yes \  # 修正变量名，将.h改为_h
                     CFLAGS="${CFLAGS}" \
                     LDFLAGS="${LDFLAGS}"
         
