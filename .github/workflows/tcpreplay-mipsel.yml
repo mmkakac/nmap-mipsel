@@ -3,6 +3,9 @@ on:
   workflow_dispatch:
 env:
   TZ: Asia/Shanghai
+  # 定义libpcap版本和安装路径
+  LIBPCAP_VERSION: 1.10.4
+  LIBPCAP_INSTALL: /tmp/mipsel-libpcap
 permissions:
   contents: write
   actions: write
@@ -26,7 +29,7 @@ jobs:
     - name: 安装系统依赖
       run: |
         sudo apt-get update
-        sudo apt-get install -y autogen autoconf automake libtool wget tar
+        sudo apt-get install -y autogen autoconf automake libtool wget tar file
 
     - name: 下载交叉编译工具链
       uses: lmq8267/dl-musl@main
@@ -37,22 +40,42 @@ jobs:
 
     - name: 编译MIPS架构的libpcap
       run: |
-        # 下载libpcap源码
-        wget https://www.tcpdump.org/release/libpcap-1.10.4.tar.gz
-        tar -zxvf libpcap-1.10.4.tar.gz
-        cd libpcap-1.10.4
+        # 下载并解压libpcap源码
+        wget https://www.tcpdump.org/release/libpcap-${LIBPCAP_VERSION}.tar.gz
+        tar -zxvf libpcap-${LIBPCAP_VERSION}.tar.gz
+        cd libpcap-${LIBPCAP_VERSION}
         
-        # 配置交叉编译
+        # 配置交叉编译环境
         export CC=mipsel-linux-muslsf-gcc
-        ./configure --host=mipsel-linux-muslsf --prefix=/tmp/mipsel-libpcap --enable-static --disable-shared
+        export AR=mipsel-linux-muslsf-ar
+        export RANLIB=mipsel-linux-muslsf-ranlib
+        
+        # 配置libpcap编译选项
+        ./configure --host=mipsel-linux-muslsf \
+                    --prefix=${LIBPCAP_INSTALL} \
+                    --enable-static \
+                    --disable-shared \
+                    --with-pcap=linux
         
         # 编译并安装
-        make
+        make -j$(nproc)
         make install
         
-        # 验证安装结果
-        ls -l /tmp/mipsel-libpcap/lib
-        ls -l /tmp/mipsel-libpcap/include
+        # 详细验证安装结果
+        echo "验证libpcap安装目录结构："
+        ls -lR ${LIBPCAP_INSTALL}
+        
+        # 检查静态库是否存在
+        if [ ! -f "${LIBPCAP_INSTALL}/lib/libpcap.a" ]; then
+          echo "错误：未找到libpcap静态库"
+          exit 1
+        fi
+        
+        # 检查头文件是否存在
+        if [ ! -f "${LIBPCAP_INSTALL}/include/pcap.h" ]; then
+          echo "错误：未找到pcap.h头文件"
+          exit 1
+        fi
 
     - name: 编译tcpreplay
       run: |
@@ -62,19 +85,30 @@ jobs:
         # 设置交叉编译环境变量
         export CC=mipsel-linux-muslsf-gcc
         export CXX=mipsel-linux-muslsf-g++
-        export CC="$CC -static"
-        export CXX="$CXX -static"
-        # 添加libpcap的头文件和库路径
-        export CFLAGS="-mlong-calls -O2 -I/tmp/mipsel-libpcap/include $CFLAGS"
-        export LDFLAGS="-mlong-calls -O2 -L/tmp/mipsel-libpcap/lib -static -lpthread $LDFLAGS"
+        export AR=mipsel-linux-muslsf-ar
+        export RANLIB=mipsel-linux-muslsf-ranlib
+        
+        # 明确指定libpcap的头文件和库路径
+        export CFLAGS="-mlong-calls -O2 -I${LIBPCAP_INSTALL}/include $CFLAGS"
+        export CPPFLAGS="-I${LIBPCAP_INSTALL}/include $CPPFLAGS"
+        export LDFLAGS="-mlong-calls -O2 -L${LIBPCAP_INSTALL}/lib -static -lpthread $LDFLAGS"
+        export PKG_CONFIG_PATH="${LIBPCAP_INSTALL}/lib/pkgconfig:$PKG_CONFIG_PATH"
         
         # 生成配置脚本
         ./autogen.sh
-        # 配置tcpreplay编译选项，指定libpcap路径
-        ./configure --host=mipsel-linux-muslsf --enable-static --disable-shared --without-dlt \
-          --with-pcap=/tmp/mipsel-libpcap
         
-        make
+        # 详细配置tcpreplay，增加调试输出
+        ./configure --host=mipsel-linux-muslsf \
+                    --enable-static \
+                    --disable-shared \
+                    --without-dlt \
+                    --with-pcap=${LIBPCAP_INSTALL} \
+                    --prefix=/tmp/tcpreplay-install \
+                    CFLAGS="-I${LIBPCAP_INSTALL}/include" \
+                    LDFLAGS="-L${LIBPCAP_INSTALL}/lib -lpcap"
+        
+        # 编译tcpreplay
+        make -j$(nproc) V=1  # V=1启用详细输出
         
         # 验证编译结果
         file src/tcpreplay
