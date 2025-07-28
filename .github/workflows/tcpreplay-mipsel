@@ -1,0 +1,127 @@
+name: tcpreplay-mipsel
+on:
+  workflow_dispatch:
+env:
+  TZ: Asia/Shanghai
+#设置仓库的读写权限
+permissions:
+  contents: write
+  actions: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        repository: appneta/tcpreplay
+        ref: master #使用tcpreplay的master分支
+
+    - name: 删除记录
+      uses: Mattraks/delete-workflow-runs@main
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+        retain_days: 0
+        keep_minimum_runs: 0
+
+    - name: 安装依赖
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libpcap-dev
+
+    - name: 下载gcc
+      uses: lmq8267/dl-musl@main
+      with:
+        target: mipsel-linux-muslsf
+        static: true
+        gccpath: /tmp
+
+    - name: 编译
+      run: |
+         sudo timedatectl set-timezone "Asia/Shanghai"
+         mipsel-linux-muslsf-gcc -v
+         export CC=mipsel-linux-muslsf-gcc
+         export CXX=mipsel-linux-muslsf-g++
+         export CC="$CC -static"
+         export CXX="$CXX -static"
+         export CFLAGS="-mlong-calls -O2 $CFLAGS"
+         export CXXFLAGS="-mlong-calls -O2 $CXXFLAGS"
+         export LDFLAGS="-mlong-calls -O2 -static -lpthread $LDFLAGS"
+         
+         # 配置tcpreplay编译选项
+         ./autogen.sh
+         ./configure --host=mipsel-linux-muslsf --enable-static --disable-shared --without-dlt --without-pcap
+         
+         make
+         
+         # 验证编译结果
+         file src/tcpreplay
+         file src/tcprewrite
+         file src/tcpprep
+         file src/tcpliveplay
+         
+         # 准备输出目录
+         mkdir -p /opt/tcpreplay
+         mipsel-linux-muslsf-strip src/tcpreplay
+         mipsel-linux-muslsf-strip src/tcprewrite
+         mipsel-linux-muslsf-strip src/tcpprep
+         mipsel-linux-muslsf-strip src/tcpliveplay
+         
+         # 移动编译产物
+         mv src/tcpreplay /opt/tcpreplay/
+         mv src/tcprewrite /opt/tcpreplay/
+         mv src/tcpprep /opt/tcpreplay/
+         mv src/tcpliveplay /opt/tcpreplay/
+         
+         # 环境变量设置
+         echo "build_time=$(TZ=Asia/Shanghai date '+%Y年%m月%d日%H:%M:%S' | jq -sRr @uri)" >> $GITHUB_ENV
+         echo "date_time=$(date '+%Y-%m-%d')" >> $GITHUB_ENV
+         echo "haxi=$(git rev-parse HEAD)" >> $GITHUB_ENV
+         echo "short_haxi=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
+
+    - name: 安装 UPX
+      uses: crazy-max/ghaction-upx@v3
+      with:
+        version: v4.2.4
+        install-only: true
+
+    - name: 压缩
+      run: |
+         cd /opt/tcpreplay
+         for file in /opt/tcpreplay/*; do
+          if [ -f "$file" ]; then
+            file $file
+            cp "$file" "${file}_upx"
+          fi
+         done
+         ls -alh
+         for file in /opt/tcpreplay/*_upx; do
+          if [ -f "$file" ]; then
+            echo "压缩 $file"
+            ls -alh $file
+            upx --lzma --best "$file"
+            ls -alh $file
+          fi
+         done
+
+    - uses: actions/upload-artifact@v4
+      with:
+        name: tcpreplay-mipsel
+        path: /opt/tcpreplay/
+
+    - name: 发布
+      uses: softprops/action-gh-release@v2
+      with:
+          token: ${{ github.token }}
+          body: |
+             > ### ![](https://img.shields.io/badge/%E7%BC%96%E8%AF%91%E6%97%B6%E9%97%B4-${{ env.build_time }}-8267?logo=github&labelColor=%E9%A1%BB)![](https://img.shields.io/github/downloads/${{ github.repository }}/${{ env.short_haxi }}/total?label=%E4%B8%8B%E8%BD%BD%E6%AC%A1%E6%95%B0&logo=github)
+
+              [当前版本编译时的提交记录](https://github.com/appneta/tcpreplay/tree/${{ env.haxi }}) 如需最新的，请fork后手动触发执行编译流程
+              
+              **-upx** 后缀的 为upx压缩文件
+              
+              **[官方仓库](https://github.com/appneta/tcpreplay)**
+              
+          tag_name: tcpreplay-${{ env.short_haxi }}
+          name: tcpreplay-${{ env.short_haxi }}_${{ env.date_time }}
+          files: /opt/tcpreplay/*
