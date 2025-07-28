@@ -29,7 +29,7 @@ jobs:
     - name: 安装系统依赖
       run: |
         sudo apt-get update
-        sudo apt-get install -y autogen autoconf automake libtool wget tar file
+        sudo apt-get install -y autogen autoconf automake libtool wget tar file pkg-config
 
     - name: 下载交叉编译工具链
       uses: lmq8267/dl-musl@main
@@ -49,6 +49,7 @@ jobs:
         export CC=mipsel-linux-muslsf-gcc
         export AR=mipsel-linux-muslsf-ar
         export RANLIB=mipsel-linux-muslsf-ranlib
+        export PKG_CONFIG=mipsel-linux-muslsf-pkg-config
         
         # 配置libpcap编译选项
         ./configure --host=mipsel-linux-muslsf \
@@ -76,6 +77,18 @@ jobs:
           echo "错误：未找到pcap.h头文件"
           exit 1
         fi
+        
+        # 检查pcap-config工具是否存在
+        if [ ! -f "${LIBPCAP_INSTALL}/bin/pcap-config" ]; then
+          echo "错误：未找到pcap-config工具"
+          exit 1
+        fi
+        
+        # 测试pcap-config输出
+        echo "pcap-config --cflags输出："
+        ${LIBPCAP_INSTALL}/bin/pcap-config --cflags
+        echo "pcap-config --libs输出："
+        ${LIBPCAP_INSTALL}/bin/pcap-config --libs
 
     - name: 编译tcpreplay
       run: |
@@ -87,25 +100,35 @@ jobs:
         export CXX=mipsel-linux-muslsf-g++
         export AR=mipsel-linux-muslsf-ar
         export RANLIB=mipsel-linux-muslsf-ranlib
+        export PKG_CONFIG=mipsel-linux-muslsf-pkg-config
         
-        # 明确指定libpcap的头文件和库路径
-        export CFLAGS="-mlong-calls -O2 -I${LIBPCAP_INSTALL}/include $CFLAGS"
-        export CPPFLAGS="-I${LIBPCAP_INSTALL}/include $CPPFLAGS"
-        export LDFLAGS="-mlong-calls -O2 -L${LIBPCAP_INSTALL}/lib -static -lpthread $LDFLAGS"
+        # 明确指定libpcap的pcap-config路径
+        export PCAP_CONFIG=${LIBPCAP_INSTALL}/bin/pcap-config
+        
+        # 通过pcap-config获取编译参数
+        export PCAP_CFLAGS=$($PCAP_CONFIG --cflags)
+        export PCAP_LIBS=$($PCAP_CONFIG --libs)
+        
+        # 组合所有编译参数
+        export CFLAGS="-mlong-calls -O2 ${PCAP_CFLAGS} $CFLAGS"
+        export CPPFLAGS="${PCAP_CFLAGS} $CPPFLAGS"
+        export LDFLAGS="-mlong-calls -O2 ${PCAP_LIBS} -static -lpthread $LDFLAGS"
         export PKG_CONFIG_PATH="${LIBPCAP_INSTALL}/lib/pkgconfig:$PKG_CONFIG_PATH"
         
         # 生成配置脚本
         ./autogen.sh
         
-        # 详细配置tcpreplay，增加调试输出
+        # 详细配置tcpreplay，强制使用指定的libpcap
         ./configure --host=mipsel-linux-muslsf \
                     --enable-static \
                     --disable-shared \
                     --without-dlt \
                     --with-pcap=${LIBPCAP_INSTALL} \
                     --prefix=/tmp/tcpreplay-install \
-                    CFLAGS="-I${LIBPCAP_INSTALL}/include" \
-                    LDFLAGS="-L${LIBPCAP_INSTALL}/lib -lpcap"
+                    ac_cv_lib_pcap_pcap_open_live=yes \
+                    ac_cv_header_pcap.h=yes \
+                    CFLAGS="${CFLAGS}" \
+                    LDFLAGS="${LDFLAGS}"
         
         # 编译tcpreplay
         make -j$(nproc) V=1  # V=1启用详细输出
