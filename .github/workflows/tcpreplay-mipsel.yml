@@ -23,64 +23,83 @@ jobs:
         retain_days: 0
         keep_minimum_runs: 0
 
-    - name: 安装依赖
+    - name: 安装系统依赖
       run: |
         sudo apt-get update
-        # 安装libpcap和autogen依赖
-        sudo apt-get install -y libpcap-dev autogen autoconf automake libtool
-        # 验证autogen版本
-        autogen --version
+        sudo apt-get install -y autogen autoconf automake libtool wget tar
 
-    - name: 下载gcc
+    - name: 下载交叉编译工具链
       uses: lmq8267/dl-musl@main
       with:
         target: mipsel-linux-muslsf
         static: true
         gccpath: /tmp
 
-    - name: 编译
+    - name: 编译MIPS架构的libpcap
       run: |
-         sudo timedatectl set-timezone "Asia/Shanghai"
-         mipsel-linux-muslsf-gcc -v
-         export CC=mipsel-linux-muslsf-gcc
-         export CXX=mipsel-linux-muslsf-g++
-         export CC="$CC -static"
-         export CXX="$CXX -static"
-         export CFLAGS="-mlong-calls -O2 $CFLAGS"
-         export CXXFLAGS="-mlong-calls -O2 $CXXFLAGS"
-         export LDFLAGS="-mlong-calls -O2 -static -lpthread $LDFLAGS"
-         
-         # 生成配置脚本
-         ./autogen.sh
-         # 配置tcpreplay编译选项
-         ./configure --host=mipsel-linux-muslsf --enable-static --disable-shared --without-dlt
-         
-         make
-         
-         # 验证编译结果
-         file src/tcpreplay
-         file src/tcprewrite
-         file src/tcpprep
-         file src/tcpliveplay
-         
-         # 准备输出目录
-         mkdir -p /opt/tcpreplay
-         mipsel-linux-muslsf-strip src/tcpreplay
-         mipsel-linux-muslsf-strip src/tcprewrite
-         mipsel-linux-muslsf-strip src/tcpprep
-         mipsel-linux-muslsf-strip src/tcpliveplay
-         
-         # 移动编译产物
-         mv src/tcpreplay /opt/tcpreplay/
-         mv src/tcprewrite /opt/tcpreplay/
-         mv src/tcpprep /opt/tcpreplay/
-         mv src/tcpliveplay /opt/tcpreplay/
-         
-         # 环境变量设置
-         echo "build_time=$(TZ=Asia/Shanghai date '+%Y年%m月%d日%H:%M:%S' | jq -sRr @uri)" >> $GITHUB_ENV
-         echo "date_time=$(date '+%Y-%m-%d')" >> $GITHUB_ENV
-         echo "haxi=$(git rev-parse HEAD)" >> $GITHUB_ENV
-         echo "short_haxi=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
+        # 下载libpcap源码
+        wget https://www.tcpdump.org/release/libpcap-1.10.4.tar.gz
+        tar -zxvf libpcap-1.10.4.tar.gz
+        cd libpcap-1.10.4
+        
+        # 配置交叉编译
+        export CC=mipsel-linux-muslsf-gcc
+        ./configure --host=mipsel-linux-muslsf --prefix=/tmp/mipsel-libpcap --enable-static --disable-shared
+        
+        # 编译并安装
+        make
+        make install
+        
+        # 验证安装结果
+        ls -l /tmp/mipsel-libpcap/lib
+        ls -l /tmp/mipsel-libpcap/include
+
+    - name: 编译tcpreplay
+      run: |
+        sudo timedatectl set-timezone "Asia/Shanghai"
+        mipsel-linux-muslsf-gcc -v
+        
+        # 设置交叉编译环境变量
+        export CC=mipsel-linux-muslsf-gcc
+        export CXX=mipsel-linux-muslsf-g++
+        export CC="$CC -static"
+        export CXX="$CXX -static"
+        # 添加libpcap的头文件和库路径
+        export CFLAGS="-mlong-calls -O2 -I/tmp/mipsel-libpcap/include $CFLAGS"
+        export LDFLAGS="-mlong-calls -O2 -L/tmp/mipsel-libpcap/lib -static -lpthread $LDFLAGS"
+        
+        # 生成配置脚本
+        ./autogen.sh
+        # 配置tcpreplay编译选项，指定libpcap路径
+        ./configure --host=mipsel-linux-muslsf --enable-static --disable-shared --without-dlt \
+          --with-pcap=/tmp/mipsel-libpcap
+        
+        make
+        
+        # 验证编译结果
+        file src/tcpreplay
+        file src/tcprewrite
+        file src/tcpprep
+        file src/tcpliveplay
+        
+        # 准备输出目录
+        mkdir -p /opt/tcpreplay
+        mipsel-linux-muslsf-strip src/tcpreplay
+        mipsel-linux-muslsf-strip src/tcprewrite
+        mipsel-linux-muslsf-strip src/tcpprep
+        mipsel-linux-muslsf-strip src/tcpliveplay
+        
+        # 移动编译产物
+        mv src/tcpreplay /opt/tcpreplay/
+        mv src/tcprewrite /opt/tcpreplay/
+        mv src/tcpprep /opt/tcpreplay/
+        mv src/tcpliveplay /opt/tcpreplay/
+        
+        # 环境变量设置
+        echo "build_time=$(TZ=Asia/Shanghai date '+%Y年%m月%d日%H:%M:%S' | jq -sRr @uri)" >> $GITHUB_ENV
+        echo "date_time=$(date '+%Y-%m-%d')" >> $GITHUB_ENV
+        echo "haxi=$(git rev-parse HEAD)" >> $GITHUB_ENV
+        echo "short_haxi=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
 
     - name: 安装 UPX
       uses: crazy-max/ghaction-upx@v3
