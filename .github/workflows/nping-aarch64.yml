@@ -1,4 +1,5 @@
-name: nping-aarch64-musl
+
+name: nping-aarch64
 on:
   workflow_dispatch:
 env:
@@ -16,40 +17,23 @@ jobs:
         repository: nmap/nmap
         ref: master
 
-    - name: 下载 aarch64 musl 交叉编译器
+    - name: 安装 aarch64 交叉编译器
       run: |
         sudo timedatectl set-timezone "Asia/Shanghai"
-        # 方案1: 直接从 musl.cc 下载
-        echo "尝试从 musl.cc 下载..."
-        if curl -fSL --connect-timeout 30 --max-time 300 --retry 3 \
-            -o /tmp/aarch64-linux-musl-cross.tgz https://musl.cc/aarch64-linux-musl-cross.tgz; then
-          echo "musl.cc 下载成功"
-        # 方案2: GitHub 代理镜像
-        elif curl -fSL --connect-timeout 30 --max-time 300 --retry 3 \
-            -o /tmp/aarch64-linux-musl-cross.tgz https://mirror.ghproxy.com/https://musl.cc/aarch64-linux-musl-cross.tgz; then
-          echo "ghproxy 镜像下载成功"
-        # 方案3: 另一个代理
-        elif curl -fSL --connect-timeout 30 --max-time 300 --retry 3 \
-            -o /tmp/aarch64-linux-musl-cross.tgz https://gh.api.99988866.xyz/https://musl.cc/aarch64-linux-musl-cross.tgz; then
-          echo "99988866 镜像下载成功"
-        else
-          echo "所有下载源均失败!"
-          exit 1
-        fi
-        mkdir -p /opt/musl
-        tar xzf /tmp/aarch64-linux-musl-cross.tgz -C /opt/musl --strip-components=1
-        echo "/opt/musl/bin" >> $GITHUB_PATH
-        aarch64-linux-musl-gcc -v
+        # 使用 Ubuntu 官方 apt 源，100% 可用，无任何第三方依赖
+        sudo apt-get update -qq
+        sudo apt-get install -y -qq gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+        aarch64-linux-gnu-gcc -v
 
     - name: 编译 nping
       run: |
-        export CC="aarch64-linux-musl-gcc -static"
-        export CXX="aarch64-linux-musl-g++ -static"
+        export CC="aarch64-linux-gnu-gcc -static"
+        export CXX="aarch64-linux-gnu-g++ -static"
         export CFLAGS="-O2"
         export CXXFLAGS="-O2"
-        export LDFLAGS="-O2"
+        export LDFLAGS="-O2 -static"
         sed -i 's|-L\. \$(SHAREDLIBV)|\$(TEST_LIBS)|g' ./libz/Makefile.in
-        ./configure --host=aarch64-linux-musl --enable-static --disable-shared \
+        ./configure --host=aarch64-linux-gnu --enable-static --disable-shared \
           --without-ncat --with-nping --without-localdirs --without-ndiff --without-zenmap --without-nmap
         make -j$(nproc)
         file nping/nping
@@ -57,7 +41,7 @@ jobs:
     - name: Strip 并压缩
       run: |
         mkdir -p /opt/nping
-        aarch64-linux-musl-strip nping/nping
+        aarch64-linux-gnu-strip nping/nping
         cp nping/nping /opt/nping/nping
         sudo apt-get install -y -qq upx-ucl 2>/dev/null || sudo apt-get install -y -qq upx 2>/dev/null || true
         cp /opt/nping/nping /opt/nping/nping_upx
@@ -66,7 +50,7 @@ jobs:
 
     - uses: actions/upload-artifact@v4
       with:
-        name: nping-aarch64-musl
+        name: nping-aarch64
         path: /opt/nping/
 
     - name: 发布 Release
@@ -76,13 +60,13 @@ jobs:
         SHORT_HASH=$(git rev-parse --short HEAD)
         DATE_TAG=$(date '+%Y-%m-%d')
         BUILD_TIME=$(TZ=Asia/Shanghai date '+%Y-%m-%d %H:%M:%S')
-        TAG_NAME="nping-aarch64-musl-${SHORT_HASH}"
-        RELEASE_NAME="nping-aarch64-musl-${SHORT_HASH}_${DATE_TAG}"
+        TAG_NAME="nping-aarch64-${SHORT_HASH}"
+        RELEASE_NAME="nping-aarch64-${SHORT_HASH}_${DATE_TAG}"
         BODY="**目标架构: aarch64 (ARM64)** — 适用于高通骁龙410等 Cortex-A53 OpenWrt 设备
 
         编译时间: ${BUILD_TIME}
 
-        编译方式: aarch64-linux-musl-gcc 静态链接 (musl libc，无 glibc NSS 问题)
+        编译方式: aarch64-linux-gnu-gcc 静态链接
 
         [源码提交](https://github.com/nmap/nmap/tree/$(git rev-parse HEAD))
 
